@@ -1,21 +1,13 @@
-## AT 23,03:47 & 0,1:45 Check the correct time range - are there any ASSIGNED tasks?
-
-## if so, login to VF and push to VD
-
-### I need to call
-#### PUT https://api-staging.versafleet.co/tasks/submit_all
-#### json= {"date":"2019-01-06"}
-
-
 from datetime import datetime, timedelta
 import requests
-from secret_keys import ENV, CLIENT_ID, CLIENT_SECRET
 
+from secret_keys import ENV, CLIENT_ID, CLIENT_SECRET, COOKIE, RANDOM_TASK_ID
 
 
 LOGFN = 'logs/' + datetime.strftime(datetime.utcnow() + timedelta(hours=8),
                                     '%y-%U-logs.txt')
 VERBOSE = True
+
 
 def write_to_log(logfn, logtext):
     with open(logfn, 'a') as f:
@@ -29,15 +21,22 @@ def write_to_log(logfn, logtext):
 def get_times(tzoffset):
     '''
     Given a tzoffset int in hours (6hours for this client)
-    return a FROM time object & TO time object
+
+    returns:
+     - FROM time object
+     - TO time object
+     - SUBMIT ALL DATE
 
     KNOWN BUGS: Negative Time Zones
     '''
-    current_dt = datetime.utcnow() + timedelta(hours=tzoffset) - timedelta(days=2)
+    current_dt = datetime.utcnow() + timedelta(hours=tzoffset)
     return (datetime.strftime(current_dt,
-                              '%Y-%m-%dT{:02d}:00:00+08:00'.format(tzoffset)),
+                              '%Y-%m-%dT06:00:00+08:00'),
             datetime.strftime(current_dt + timedelta(days=1),
-                              '%Y-%m-%dT{:02d}:59:59+08:00'.format(tzoffset - 1)))
+                              '%Y-%m-%dT05:59:59+08:00'),
+            datetime.strftime(current_dt + timedelta(days=1),
+                              '%Y-%m-%d')
+    )
 
 
 def get_num_tasks(varibales, time_from, time_to, per_pg, archived):
@@ -73,6 +72,32 @@ def get_num_tasks(varibales, time_from, time_to, per_pg, archived):
     return acted_on
 
 
+def push_vd(variables, push_date):
+    'Push push_date tasks to VD'
+    env, cookie = (
+        variables['env'],
+        variables['cookie']
+    )
+    tmp = requests.put(
+        'https://{}.versafleet.co/tasks/submit_all'.format(env),
+        json= {"date":push_date},
+        headers={"cookie":cookie}
+    )
+    return tmp
+
+
+def random_get(variables):
+    'Do a random GET to refresh cookie'
+    env, cookie, rand_task_id = (
+        variables['env'],
+        variables['cookie'],
+        variables['rand_task_id']
+    )
+    tmp = requests.get(
+        'https://{!s}.versafleet.co/tasks/{!s}'.format(env, rand_task_id),
+        headers={"cookie":cookie}
+    )
+    return tmp
 
 
 
@@ -81,10 +106,27 @@ def get_num_tasks(varibales, time_from, time_to, per_pg, archived):
 variables = {
     'env': ENV,
     'c_id': CLIENT_ID,
-    'c_secret': CLIENT_SECRET
+    'c_secret': CLIENT_SECRET,
+    'cookie': COOKIE,
+    'rand_task_id': RANDOM_TASK_ID
 }
-time_from, time_to = get_times(2)
+
+time_from, time_to, push_date = get_times(2)
 task_cnt = get_num_tasks(variables, time_from, time_to, 20, 0)
 
 if task_cnt > 0:
-    print task_cnt
+    tmp = push_vd(variables, push_date)
+    if VERBOSE:
+        print "SUBMIT ALL PUT"
+    write_to_log(LOGFN,
+                 "Num Assigned: {!s}. Made a SUBMIT ALL call. Status:{!s}".format(
+                     task_cnt, tmp.status_code
+                 ))
+else:
+    tmp = random_get(variables)
+    if VERBOSE:
+        print "Just a GET to refresh"
+    write_to_log(LOGFN,
+                 "Num Assigned: {!s}. GET to refresh. Status:{!s}".format(
+                     task_cnt, tmp.status_code
+                 ))
